@@ -1,0 +1,170 @@
+import { useState, useEffect, useCallback } from 'react';
+import { Heart, Droplet, Phone, MapPin, Calendar, CheckCircle2, Plus } from 'lucide-react';
+import { useAuth } from '../lib/auth';
+import { useToast } from '../lib/toast';
+import { supabase, BloodRequest, Donation } from '../lib/supabase';
+import { BloodDrop, EmptyState, Modal } from '../components/ui';
+
+export function BloodRequests() {
+  const { profile } = useAuth();
+  const { notify } = useToast();
+  const [requests, setRequests] = useState<BloodRequest[]>([]);
+  const [donations, setDonations] = useState<Donation[]>([]);
+  const [pledgeOpen, setPledgeOpen] = useState<BloodRequest | null>(null);
+  const [pledgeUnits, setPledgeUnits] = useState(1);
+
+  const load = useCallback(async () => {
+    const { data } = await supabase.from('blood_requests').select('*').order('created_at', { ascending: false });
+    setRequests((data as BloodRequest[]) ?? []);
+    if (profile) {
+      const { data: dons } = await supabase.from('donations').select('*').eq('donor_id', profile.id);
+      setDonations((dons as Donation[]) ?? []);
+    }
+  }, [profile]);
+
+  useEffect(() => { load(); }, [load]);
+
+  if (!profile) return null;
+
+  const openRequests = requests.filter((r) => r.status === 'open');
+  const myDonations = donations;
+
+  const pledgeDonation = async () => {
+    if (!pledgeOpen) return;
+    const { error } = await supabase.from('donations').insert({
+      donor_id: profile.id,
+      request_id: pledgeOpen.id,
+      units: pledgeUnits,
+      donation_date: new Date().toISOString().slice(0, 10),
+      hospital_name: pledgeOpen.hospital_name,
+    });
+    if (error) {
+      notify('Could not record donation', 'error');
+      return;
+    }
+    // Update fulfilled units
+    const newFulfilled = pledgeOpen.units_fulfilled + pledgeUnits;
+    const status = newFulfilled >= pledgeOpen.units_required ? 'fulfilled' : 'open';
+    await supabase.from('blood_requests').update({ units_fulfilled: newFulfilled, status }).eq('id', pledgeOpen.id);
+    // Update last donation date on profile
+    await supabase.from('profiles').update({ last_donation_date: new Date().toISOString().slice(0, 10) }).eq('id', profile.id);
+    notify('Donation recorded. Thank you for saving a life!', 'success');
+    setPledgeOpen(null);
+    setPledgeUnits(1);
+    load();
+  };
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h1 className="font-display text-2xl font-bold text-gray-900 dark:text-white">Blood Requests</h1>
+        <p className="text-sm text-gray-500">Active emergency requests — pledge a donation to help</p>
+      </div>
+
+      {/* Open requests */}
+      <div>
+        <h2 className="font-display text-lg font-semibold text-gray-900 dark:text-white mb-3 flex items-center gap-2">
+          <Heart className="h-5 w-5 text-blood-600" /> Active Requests ({openRequests.length})
+        </h2>
+        {openRequests.length === 0 ? (
+          <div className="card p-6">
+            <EmptyState icon={<Heart className="h-6 w-6" />} title="No active requests" subtitle="When admins create emergency requests, they'll appear here." />
+          </div>
+        ) : (
+          <div className="grid gap-4 sm:grid-cols-2">
+            {openRequests.map((r) => (
+              <div key={r.id} className="card p-5">
+                <div className="flex items-start justify-between">
+                  <div className="flex items-center gap-3">
+                    <BloodDrop group={r.blood_group} size="md" />
+                    <div>
+                      <p className="font-semibold text-gray-900 dark:text-white">{r.hospital_name}</p>
+                      <p className="text-xs text-gray-500 flex items-center gap-1"><Calendar className="h-3 w-3" /> {new Date(r.created_at).toLocaleString()}</p>
+                    </div>
+                  </div>
+                  <div className="flex flex-col items-end gap-1">
+                    {r.urgency_level === 'critical' && (
+                      <span className="badge bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300">Critical</span>
+                    )}
+                    {r.urgency_level === 'urgent' && (
+                      <span className="badge bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300">Urgent</span>
+                    )}
+                    {r.urgency_level === 'normal' && (
+                      <span className="badge bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300">Normal</span>
+                    )}
+                  </div>
+                </div>
+                <div className="mt-3 space-y-1.5 text-sm text-gray-600 dark:text-gray-400">
+                  <p className="flex items-center gap-2"><Phone className="h-4 w-4 text-gray-400" /> {r.contact_name} — {r.contact_phone}</p>
+                  {r.hospital_location && <p className="flex items-center gap-2"><MapPin className="h-4 w-4 text-gray-400" /> {r.hospital_location}</p>}
+                  <p className="flex items-center gap-2"><MapPin className="h-4 w-4 text-gray-400" /> Search radius: {r.radius_km} km</p>
+                  <div className="flex items-center gap-2">
+                    <Droplet className="h-4 w-4 text-gray-400" />
+                    <div className="flex-1">
+                      <div className="h-2 rounded-full bg-gray-100 dark:bg-gray-800 overflow-hidden">
+                        <div className="h-full bg-blood-500 rounded-full" style={{ width: `${Math.min(100, (r.units_fulfilled / r.units_required) * 100)}%` }} />
+                      </div>
+                    </div>
+                    <span className="text-xs font-medium text-gray-700 dark:text-gray-300">{r.units_fulfilled}/{r.units_required} units</span>
+                  </div>
+                </div>
+                <button onClick={() => { setPledgeOpen(r); setPledgeUnits(1); }} className="btn-primary w-full mt-4">
+                  <Plus className="h-4 w-4" /> Pledge Donation
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* My donations */}
+      <div className="card p-6">
+        <h2 className="font-display text-lg font-semibold text-gray-900 dark:text-white mb-4">My Pledged Donations</h2>
+        {myDonations.length === 0 ? (
+          <EmptyState icon={<Droplet className="h-6 w-6" />} title="No donations yet" subtitle="Pledge to an active request to start your life-saving journey." />
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-gray-100 dark:border-gray-800 text-left text-gray-500">
+                  <th className="pb-2 font-medium">Date</th>
+                  <th className="pb-2 font-medium">Units</th>
+                  <th className="pb-2 font-medium">Hospital</th>
+                </tr>
+              </thead>
+              <tbody>
+                {myDonations.map((d) => (
+                  <tr key={d.id} className="border-b border-gray-50 dark:border-gray-800/50">
+                    <td className="py-3 text-gray-900 dark:text-gray-200">{new Date(d.donation_date).toLocaleDateString()}</td>
+                    <td className="py-3"><span className="badge bg-blood-50 text-blood-700 dark:bg-blood-900/30 dark:text-blood-300">{d.units}</span></td>
+                    <td className="py-3 text-gray-600 dark:text-gray-400">{d.hospital_name ?? '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      <Modal open={!!pledgeOpen} onClose={() => setPledgeOpen(null)} title="Pledge a Donation" size="sm">
+        {pledgeOpen && (
+          <div>
+            <div className="mb-4 flex items-center gap-3 rounded-xl bg-blood-50 p-4 dark:bg-blood-900/20">
+              <BloodDrop group={pledgeOpen.blood_group} size="md" />
+              <div>
+                <p className="font-semibold text-gray-900 dark:text-white">{pledgeOpen.hospital_name}</p>
+                <p className="text-xs text-gray-500">{pledgeOpen.units_fulfilled}/{pledgeOpen.units_required} units fulfilled</p>
+              </div>
+            </div>
+            <label className="label">Units to pledge</label>
+            <input type="number" min="1" max={pledgeOpen.units_required - pledgeOpen.units_fulfilled} value={pledgeUnits} onChange={(e) => setPledgeUnits(Math.max(1, parseInt(e.target.value) || 1))} className="input mb-4" />
+            <div className="flex gap-2">
+              <button onClick={() => setPledgeOpen(null)} className="btn-secondary flex-1">Cancel</button>
+              <button onClick={pledgeDonation} className="btn-primary flex-1"><CheckCircle2 className="h-4 w-4" /> Confirm</button>
+            </div>
+          </div>
+        )}
+      </Modal>
+    </div>
+  );
+}
