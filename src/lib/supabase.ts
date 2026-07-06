@@ -48,11 +48,14 @@ export interface BloodRequest {
   contact_phone: string;
   units_required: number;
   units_fulfilled: number;
-  status: 'open' | 'fulfilled' | 'cancelled';
+  status: 'pending' | 'open' | 'fulfilled' | 'cancelled';
   urgency_level: UrgencyLevel;
   latitude: number | null;
   longitude: number | null;
   radius_km: number;
+  rejection_reason: string | null;
+  reviewed_at: string | null;
+  reviewed_by: string | null;
   created_at: string;
 }
 

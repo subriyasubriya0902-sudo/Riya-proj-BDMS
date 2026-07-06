@@ -124,7 +124,8 @@ export function AnalyticsDashboard({ donors, requests, donations }: Props) {
   const totalDonors = donors.length;
   const totalRequests = requests.length;
   const approvedRequests = requests.filter((r) => r.status === 'fulfilled').length;
-  const pendingRequests = requests.filter((r) => r.status === 'open').length;
+  const pendingRequests = requests.filter((r) => r.status === 'pending').length;
+  const openRequests = requests.filter((r) => r.status === 'open').length;
   const cancelledRequests = requests.filter((r) => r.status === 'cancelled').length;
   const availableDonors = donors.filter((d) => d.is_available).length;
   const totalUnits = donations.reduce((s, d) => s + Number(d.units), 0);
@@ -142,7 +143,8 @@ export function AnalyticsDashboard({ donors, requests, donations }: Props) {
   }));
 
   const requestStatusSegments = [
-    { label: 'Open', value: pendingRequests, color: '#f59e0b' },
+    { label: 'Open', value: openRequests, color: '#3b82f6' },
+    { label: 'Pending', value: pendingRequests, color: '#f59e0b' },
     { label: 'Fulfilled', value: approvedRequests, color: '#22c55e' },
     { label: 'Cancelled', value: cancelledRequests, color: '#9ca3af' },
   ];
@@ -161,7 +163,7 @@ export function AnalyticsDashboard({ donors, requests, donations }: Props) {
         <StatCard label="Total Donors" value={totalDonors} icon={<Users className="h-6 w-6" />} accent="blood" />
         <StatCard label="Total Requests" value={totalRequests} icon={<Heart className="h-6 w-6" />} accent="amber" />
         <StatCard label="Fulfilled Requests" value={approvedRequests} icon={<CheckCircle2 className="h-6 w-6" />} accent="green" />
-        <StatCard label="Pending Requests" value={pendingRequests} icon={<Clock className="h-6 w-6" />} accent="blue" />
+        <StatCard label="Pending Review" value={pendingRequests} icon={<Clock className="h-6 w-6" />} accent="amber" />
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">

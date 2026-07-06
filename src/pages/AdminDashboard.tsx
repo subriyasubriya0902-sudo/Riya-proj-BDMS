@@ -34,6 +34,12 @@ export function AdminDashboard() {
   const [locationFilter, setLocationFilter] = useState('');
   const [availFilter, setAvailFilter] = useState<'all' | 'available' | 'unavailable'>('all');
 
+  // Request approval workflow
+  const [reqStatusFilter, setReqStatusFilter] = useState<'pending' | 'open' | 'fulfilled' | 'cancelled' | 'all'>('all');
+  const [rejectTarget, setRejectTarget] = useState<BloodRequest | null>(null);
+  const [rejectReason, setRejectReason] = useState('');
+  const [actionLoading, setActionLoading] = useState<string | null>(null);
+
   // Create request form
   const [createOpen, setCreateOpen] = useState(false);
   const [newReq, setNewReq] = useState({
@@ -84,6 +90,7 @@ export function AdminDashboard() {
   // --- Stats ---
   const availableDonors = donors.filter((d) => d.is_available).length;
   const openRequests = requests.filter((r) => r.status === 'open').length;
+  const pendingRequests = requests.filter((r) => r.status === 'pending').length;
   const criticalRequests = requests.filter((r) => r.status === 'open' && r.urgency_level === 'critical').length;
   const totalUnits = donations.reduce((s, d) => s + Number(d.units), 0);
   const totalDonations = donations.length;
@@ -183,14 +190,77 @@ export function AdminDashboard() {
     setTab('requests');
   };
 
-  const updateRequestStatus = async (id: string, status: 'fulfilled' | 'cancelled') => {
-    const { error } = await supabase.from('blood_requests').update({ status }).eq('id', id);
-    if (error) {
-      notify('Could not update request', 'error');
-    } else {
-      notify(`Request ${status}`, 'success');
-      loadData();
+  const approveRequest = async (req: BloodRequest) => {
+    if (actionLoading) return;
+    setActionLoading(req.id);
+    const { error } = await supabase.from('blood_requests').update({
+      status: 'open',
+      reviewed_at: new Date().toISOString(),
+      reviewed_by: profile!.id,
+      rejection_reason: null,
+    }).eq('id', req.id);
+    setActionLoading(null);
+    if (error) { notify('Could not approve request', 'error'); return; }
+    // Notify matching donors
+    const canDonate = CAN_RECEIVE_FROM[req.blood_group];
+    let candidates = donors.filter((d) =>
+      canDonate.includes(d.blood_group) && d.is_available && d.id !== profile!.id
+    );
+    if (req.latitude && req.longitude) {
+      candidates = candidates.filter((d) =>
+        d.latitude && d.longitude &&
+        distanceKm(req.latitude!, req.longitude!, d.latitude, d.longitude) <= req.radius_km
+      );
     }
+    if (candidates.length > 0) {
+      const urgencyPrefix = req.urgency_level === 'critical' ? 'CRITICAL' : req.urgency_level === 'urgent' ? 'URGENT' : 'BLOOD NEEDED';
+      await supabase.from('notifications').insert(candidates.map((d) => ({
+        recipient_id: d.id,
+        request_id: req.id,
+        title: `${urgencyPrefix}: ${req.blood_group} needed`,
+        message: `${req.units_required} unit(s) of ${req.blood_group} at ${req.hospital_name}. Contact: ${req.contact_name} — ${req.contact_phone}`,
+        type: 'request' as const,
+      })));
+    }
+    notify(`Request approved — ${candidates.length} donors notified`, 'success');
+    loadData();
+  };
+
+  const rejectRequest = async () => {
+    if (!rejectTarget) return;
+    setActionLoading(rejectTarget.id);
+    const { error } = await supabase.from('blood_requests').update({
+      status: 'cancelled',
+      rejection_reason: rejectReason.trim() || 'No reason provided',
+      reviewed_at: new Date().toISOString(),
+      reviewed_by: profile!.id,
+    }).eq('id', rejectTarget.id);
+    setActionLoading(null);
+    if (error) { notify('Could not reject request', 'error'); return; }
+    // Notify requester if they exist
+    if (rejectTarget.requester_id) {
+      await supabase.from('notifications').insert({
+        recipient_id: rejectTarget.requester_id,
+        request_id: rejectTarget.id,
+        title: `Blood request rejected`,
+        message: `Your request for ${rejectTarget.blood_group} at ${rejectTarget.hospital_name} was rejected. Reason: ${rejectReason.trim() || 'No reason provided'}`,
+        type: 'system' as const,
+      });
+    }
+    setRejectTarget(null);
+    setRejectReason('');
+    notify('Request rejected', 'success');
+    loadData();
+  };
+
+  const fulfillRequest = async (id: string) => {
+    if (actionLoading) return;
+    setActionLoading(id);
+    const { error } = await supabase.from('blood_requests').update({ status: 'fulfilled' }).eq('id', id);
+    setActionLoading(null);
+    if (error) { notify('Could not update request', 'error'); return; }
+    notify('Request marked fulfilled', 'success');
+    loadData();
   };
 
   // Manually re-notify matching donors for an existing request
@@ -234,11 +304,11 @@ export function AdminDashboard() {
     return <span className={`badge ${styles[level]}`}>{level}</span>;
   };
 
-  const tabs: { id: Tab; label: string; icon: React.ReactNode }[] = [
+  const tabs: { id: Tab; label: string; icon: React.ReactNode; badge?: number }[] = [
     { id: 'overview', label: 'Overview', icon: <Activity className="h-4 w-4" /> },
     { id: 'analytics', label: 'Analytics', icon: <TrendingUp className="h-4 w-4" /> },
     { id: 'donors', label: 'Donors', icon: <Users className="h-4 w-4" /> },
-    { id: 'requests', label: 'Blood Requests', icon: <Heart className="h-4 w-4" /> },
+    { id: 'requests', label: 'Blood Requests', icon: <Heart className="h-4 w-4" />, badge: requests.filter((r) => r.status === 'pending').length },
     { id: 'create', label: 'Create Request', icon: <Plus className="h-4 w-4" /> },
   ];
 
@@ -268,12 +338,14 @@ export function AdminDashboard() {
             onClick={() => t.id === 'create' ? setCreateOpen(true) : setTab(t.id)}
             className={`flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium whitespace-nowrap transition-colors ${
               tab === t.id
-                ? 'bg-blood-50 text-blood-700 dark:bg-blood-900/30 dark:text-blood-300'
-                : 'text-gray-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800'
+                ? 'bg-blood-600 text-white shadow-sm'
+                : 'text-gray-600 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-800'
             }`}
           >
-            {t.icon}
-            {t.label}
+            {t.icon} {t.label}
+            {t.badge != null && t.badge > 0 && (
+              <span className="inline-flex h-5 min-w-[20px] items-center justify-center rounded-full bg-yellow-500 px-1 text-xs font-bold text-white">{t.badge}</span>
+            )}
           </button>
         ))}
       </div>
@@ -290,6 +362,7 @@ export function AdminDashboard() {
             <StatCard label="Total Donors" value={donors.length} icon={<Users className="h-6 w-6" />} accent="blood" />
             <StatCard label="Available Now" value={availableDonors} icon={<Heart className="h-6 w-6" />} accent="green" />
             <StatCard label="Open Requests" value={openRequests} icon={<AlertTriangle className="h-6 w-6" />} accent="amber" />
+            <StatCard label="Pending Review" value={pendingRequests} icon={<Clock className="h-6 w-6" />} accent="blood" />
             <StatCard label="Units Collected" value={totalUnits} icon={<Droplet className="h-6 w-6" />} accent="blue" />
           </div>
 
@@ -431,64 +504,171 @@ export function AdminDashboard() {
       )}
 
       {/* === REQUESTS TAB === */}
-      {tab === 'requests' && (
-        <div className="card p-6 animate-fade-in">
-          <h2 className="font-display text-lg font-semibold text-gray-900 dark:text-white mb-4">All Blood Requests</h2>
-          {requests.length === 0 ? (
-            <EmptyState icon={<Heart className="h-6 w-6" />} title="No requests yet" subtitle="Create a blood request to notify matching donors." />
-          ) : (
-            <div className="grid gap-4 sm:grid-cols-2">
-              {requests.map((r) => (
-                <div key={r.id} className="rounded-xl border border-gray-100 p-4 dark:border-gray-800">
-                  <div className="flex items-start justify-between">
-                    <div className="flex items-center gap-3">
-                      <BloodDrop group={r.blood_group} size="md" />
-                      <div>
-                        <p className="font-semibold text-gray-900 dark:text-white flex items-center gap-1.5">
-                          <Building2 className="h-3.5 w-3.5 text-gray-400" />
-                          {r.hospital_name}
-                        </p>
-                        <p className="text-xs text-gray-500 flex items-center gap-1 mt-0.5">
-                          <Clock className="h-3 w-3" />
-                          {new Date(r.created_at).toLocaleString()}
-                        </p>
+      {tab === 'requests' && (() => {
+        const STATUS_FILTERS: { value: typeof reqStatusFilter; label: string; color: string }[] = [
+          { value: 'all', label: 'All', color: 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300' },
+          { value: 'pending', label: 'Pending', color: 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/40 dark:text-yellow-300' },
+          { value: 'open', label: 'Approved', color: 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300' },
+          { value: 'fulfilled', label: 'Fulfilled', color: 'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300' },
+          { value: 'cancelled', label: 'Rejected', color: 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300' },
+        ];
+        const pendingCount = requests.filter((r) => r.status === 'pending').length;
+        const filtered = reqStatusFilter === 'all' ? requests : requests.filter((r) => r.status === reqStatusFilter);
+        const statusBadge = (r: BloodRequest) => {
+          if (r.status === 'pending') return <span className="badge bg-yellow-100 text-yellow-700 dark:bg-yellow-900/40 dark:text-yellow-300">Pending Review</span>;
+          if (r.status === 'open') return <span className="badge bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300">Approved</span>;
+          if (r.status === 'fulfilled') return <span className="badge bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300">Fulfilled</span>;
+          return <span className="badge bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300">Rejected</span>;
+        };
+        return (
+          <div className="space-y-4 animate-fade-in">
+            {/* Status filter pills */}
+            <div className="flex flex-wrap gap-2">
+              {STATUS_FILTERS.map((sf) => (
+                <button
+                  key={sf.value}
+                  onClick={() => setReqStatusFilter(sf.value)}
+                  className={`flex items-center gap-1.5 rounded-full px-4 py-1.5 text-sm font-medium transition-all border-2 ${
+                    reqStatusFilter === sf.value
+                      ? 'border-blood-500 ' + sf.color
+                      : 'border-transparent ' + sf.color + ' opacity-60 hover:opacity-100'
+                  }`}
+                >
+                  {sf.label}
+                  {sf.value === 'pending' && pendingCount > 0 && (
+                    <span className="inline-flex h-5 min-w-[20px] items-center justify-center rounded-full bg-yellow-500 px-1 text-xs font-bold text-white">{pendingCount}</span>
+                  )}
+                </button>
+              ))}
+              <span className="ml-auto self-center text-sm text-gray-500">{filtered.length} request{filtered.length !== 1 ? 's' : ''}</span>
+            </div>
+
+            {filtered.length === 0 ? (
+              <div className="card p-6">
+                <EmptyState icon={<Heart className="h-6 w-6" />} title="No requests" subtitle="No requests match the selected filter." />
+              </div>
+            ) : (
+              <div className="grid gap-4 sm:grid-cols-2">
+                {filtered.map((r) => (
+                  <div key={r.id} className={`rounded-xl border p-4 dark:border-gray-800 ${
+                    r.status === 'pending' ? 'border-yellow-200 bg-yellow-50/40 dark:bg-yellow-900/10' : 'border-gray-100 bg-white dark:bg-gray-900'
+                  }`}>
+                    <div className="flex items-start justify-between">
+                      <div className="flex items-center gap-3">
+                        <BloodDrop group={r.blood_group} size="md" />
+                        <div>
+                          <p className="font-semibold text-gray-900 dark:text-white flex items-center gap-1.5">
+                            <Building2 className="h-3.5 w-3.5 text-gray-400" />
+                            {r.hospital_name}
+                          </p>
+                          <p className="text-xs text-gray-500 flex items-center gap-1 mt-0.5">
+                            <Clock className="h-3 w-3" />
+                            {new Date(r.created_at).toLocaleString()}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex flex-col items-end gap-1">
+                        {urgencyBadge(r.urgency_level)}
+                        {statusBadge(r)}
                       </div>
                     </div>
-                    <div className="flex flex-col items-end gap-1">
-                      {urgencyBadge(r.urgency_level)}
-                      <span className={`badge ${
-                        r.status === 'open' ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300' :
-                        r.status === 'fulfilled' ? 'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300' :
-                        'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300'
-                      }`}>{r.status}</span>
+
+                    <div className="mt-3 space-y-1 text-sm text-gray-600 dark:text-gray-400">
+                      <p><span className="text-gray-500">Contact:</span> {r.contact_name} — {r.contact_phone}</p>
+                      <p><span className="text-gray-500">Units:</span> {r.units_fulfilled} / {r.units_required}</p>
+                      <p><span className="text-gray-500">Radius:</span> {r.radius_km} km</p>
+                      {r.hospital_location && <p><span className="text-gray-500">Address:</span> {r.hospital_location}</p>}
+                      {r.latitude && <p><span className="text-gray-500">Coordinates:</span> {r.latitude.toFixed(3)}, {r.longitude?.toFixed(3)}</p>}
+                      {r.status === 'cancelled' && r.rejection_reason && (
+                        <p className="mt-2 rounded-lg bg-red-50 p-2 text-red-700 dark:bg-red-900/20 dark:text-red-300">
+                          <span className="font-medium">Rejection reason:</span> {r.rejection_reason}
+                        </p>
+                      )}
+                      {r.reviewed_at && (
+                        <p className="text-xs text-gray-400">Reviewed: {new Date(r.reviewed_at).toLocaleString()}</p>
+                      )}
                     </div>
+
+                    {/* Pending: Approve + Reject */}
+                    {r.status === 'pending' && (
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        <button
+                          onClick={() => approveRequest(r)}
+                          disabled={actionLoading === r.id}
+                          className="btn-primary text-xs flex-1"
+                        >
+                          <CheckCircle2 className="h-3.5 w-3.5" />
+                          {actionLoading === r.id ? 'Approving…' : 'Approve'}
+                        </button>
+                        <button
+                          onClick={() => { setRejectTarget(r); setRejectReason(''); }}
+                          disabled={actionLoading === r.id}
+                          className="btn-ghost text-xs flex-1 border border-red-200 text-red-600 hover:bg-red-50 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-900/20"
+                        >
+                          <X className="h-3.5 w-3.5" /> Reject
+                        </button>
+                      </div>
+                    )}
+
+                    {/* Open (approved): Notify + Fulfill + Reject */}
+                    {r.status === 'open' && (
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        <button onClick={() => renotifyDonors(r)} className="btn-secondary text-xs">
+                          <Bell className="h-3.5 w-3.5" /> Notify Donors
+                        </button>
+                        <button onClick={() => fulfillRequest(r.id)} disabled={actionLoading === r.id} className="btn-secondary text-xs">
+                          <CheckCircle2 className="h-3.5 w-3.5" /> Fulfill
+                        </button>
+                        <button
+                          onClick={() => { setRejectTarget(r); setRejectReason(''); }}
+                          className="btn-ghost text-xs border border-red-200 text-red-600 hover:bg-red-50 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-900/20"
+                        >
+                          <X className="h-3.5 w-3.5" /> Reject
+                        </button>
+                      </div>
+                    )}
                   </div>
-                  <div className="mt-3 space-y-1 text-sm text-gray-600 dark:text-gray-400">
-                    <p><span className="text-gray-500">Contact:</span> {r.contact_name} — {r.contact_phone}</p>
-                    <p><span className="text-gray-500">Units:</span> {r.units_fulfilled} / {r.units_required}</p>
-                    <p><span className="text-gray-500">Radius:</span> {r.radius_km} km</p>
-                    {r.hospital_location && <p><span className="text-gray-500">Address:</span> {r.hospital_location}</p>}
-                  {r.latitude && <p><span className="text-gray-500">Coordinates:</span> {r.latitude.toFixed(3)}, {r.longitude?.toFixed(3)}</p>}
-                  </div>
-                  {r.status === 'open' && (
-                    <div className="mt-3 flex flex-wrap gap-2">
-                      <button onClick={() => renotifyDonors(r)} className="btn-secondary text-xs">
-                        <Bell className="h-3.5 w-3.5" /> Notify Donors
-                      </button>
-                      <button onClick={() => updateRequestStatus(r.id, 'fulfilled')} className="btn-secondary text-xs">
-                        <CheckCircle2 className="h-3.5 w-3.5" /> Fulfill
-                      </button>
-                      <button onClick={() => updateRequestStatus(r.id, 'cancelled')} className="btn-ghost text-xs">
-                        <X className="h-3.5 w-3.5" /> Cancel
-                      </button>
-                    </div>
-                  )}
-                </div>
-              ))}
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      })()}
+
+      {/* Reject modal */}
+      <Modal open={!!rejectTarget} onClose={() => { setRejectTarget(null); setRejectReason(''); }} title="Reject Blood Request" size="sm">
+        {rejectTarget && (
+          <div className="space-y-4">
+            <div className="flex items-center gap-3 rounded-xl bg-red-50 p-4 dark:bg-red-900/20">
+              <BloodDrop group={rejectTarget.blood_group} size="sm" />
+              <div>
+                <p className="font-semibold text-gray-900 dark:text-white">{rejectTarget.hospital_name}</p>
+                <p className="text-xs text-gray-500">{rejectTarget.blood_group} · {rejectTarget.units_required} unit(s)</p>
+              </div>
             </div>
-          )}
-        </div>
-      )}
+            <div>
+              <label className="label">Rejection Reason <span className="text-gray-400">(optional)</span></label>
+              <textarea
+                value={rejectReason}
+                onChange={(e) => setRejectReason(e.target.value)}
+                placeholder="Insufficient stock, duplicate request, incorrect information…"
+                rows={3}
+                className="input resize-none"
+              />
+            </div>
+            <div className="flex gap-2">
+              <button onClick={() => { setRejectTarget(null); setRejectReason(''); }} className="btn-secondary flex-1">Cancel</button>
+              <button
+                onClick={rejectRequest}
+                disabled={!!actionLoading}
+                className="flex-1 rounded-xl bg-red-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-red-700 disabled:opacity-60"
+              >
+                {actionLoading ? 'Rejecting…' : 'Confirm Reject'}
+              </button>
+            </div>
+          </div>
+        )}
+      </Modal>
 
       {/* === CREATE REQUEST MODAL === */}
       <Modal open={createOpen} onClose={() => setCreateOpen(false)} title="Create Blood Request" size="lg">
