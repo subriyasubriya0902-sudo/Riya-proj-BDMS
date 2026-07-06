@@ -10,8 +10,9 @@ import {
   distanceKm, CAN_RECEIVE_FROM, UrgencyLevel,
 } from '../lib/supabase';
 import { StatCard, BloodDrop, AvailabilityBadge, EmptyState, Modal } from '../components/ui';
+import { AnalyticsDashboard } from '../components/AnalyticsDashboard';
 
-type Tab = 'overview' | 'donors' | 'requests' | 'create';
+type Tab = 'overview' | 'analytics' | 'donors' | 'requests' | 'create';
 
 const URGENCY_OPTIONS: { value: UrgencyLevel; label: string; color: string }[] = [
   { value: 'critical', label: 'Critical — Immediate', color: 'text-red-600' },
@@ -235,6 +236,7 @@ export function AdminDashboard() {
 
   const tabs: { id: Tab; label: string; icon: React.ReactNode }[] = [
     { id: 'overview', label: 'Overview', icon: <Activity className="h-4 w-4" /> },
+    { id: 'analytics', label: 'Analytics', icon: <TrendingUp className="h-4 w-4" /> },
     { id: 'donors', label: 'Donors', icon: <Users className="h-4 w-4" /> },
     { id: 'requests', label: 'Blood Requests', icon: <Heart className="h-4 w-4" /> },
     { id: 'create', label: 'Create Request', icon: <Plus className="h-4 w-4" /> },
@@ -275,6 +277,11 @@ export function AdminDashboard() {
           </button>
         ))}
       </div>
+
+      {/* === ANALYTICS TAB === */}
+      {tab === 'analytics' && (
+        <AnalyticsDashboard donors={donors} requests={requests} donations={donations} />
+      )}
 
       {/* === OVERVIEW TAB === */}
       {tab === 'overview' && (
