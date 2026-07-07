@@ -104,8 +104,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const signIn = async (email: string, password: string) => {
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
     if (error) return { error: error.message };
+    // Fire-and-forget: send welcome-back email without blocking login
+    if (data.session) {
+      fetch(
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/send-welcome-email`,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${data.session.access_token}`,
+            'Content-Type': 'application/json',
+            Apikey: import.meta.env.VITE_SUPABASE_ANON_KEY,
+          },
+        },
+      ).catch(() => {
+        // Non-critical — login still succeeds if email fails
+      });
+    }
     return { error: null };
   };
 
