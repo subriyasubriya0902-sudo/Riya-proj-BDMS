@@ -77,6 +77,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     });
     if (error) return { error: error.message };
     if (data.user) {
+      // signUp returns a session when email confirmation is disabled.
+      // Activate it before inserting the profile so auth.uid() resolves
+      // and the RLS INSERT policy (auth.uid() = id) passes.
+      if (data.session) {
+        await supabase.auth.setSession(data.session);
+      }
       const isAdmin = metadata.admin_code === 'ADMIN2026';
       const { error: profileError } = await supabase.from('profiles').insert({
         id: data.user.id,
