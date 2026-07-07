@@ -40,21 +40,45 @@ export function BloodRequests() {
 
   const pledgeDonation = async () => {
     if (!pledgeOpen) return;
-    const { error } = await supabase.from('donations').insert({
+
+    // Fetch the current units_fulfilled from the DB to avoid stale-state races
+    const { data: fresh, error: fetchErr } = await supabase
+      .from('blood_requests')
+      .select('units_fulfilled, units_required')
+      .eq('id', pledgeOpen.id)
+      .single();
+    if (fetchErr || !fresh) {
+      notify('Could not verify request status', 'error');
+      return;
+    }
+
+    const { error: donErr } = await supabase.from('donations').insert({
       donor_id: profile.id,
       request_id: pledgeOpen.id,
       units: pledgeUnits,
       donation_date: new Date().toISOString().slice(0, 10),
       hospital_name: pledgeOpen.hospital_name,
     });
-    if (error) {
+    if (donErr) {
       notify('Could not record donation', 'error');
       return;
     }
-    const newFulfilled = pledgeOpen.units_fulfilled + pledgeUnits;
-    const status = newFulfilled >= pledgeOpen.units_required ? 'fulfilled' : 'open';
-    await supabase.from('blood_requests').update({ units_fulfilled: newFulfilled, status }).eq('id', pledgeOpen.id);
-    await supabase.from('profiles').update({ last_donation_date: new Date().toISOString().slice(0, 10) }).eq('id', profile.id);
+
+    const newFulfilled = fresh.units_fulfilled + pledgeUnits;
+    const status = newFulfilled >= fresh.units_required ? 'fulfilled' : 'open';
+    const { error: reqErr } = await supabase
+      .from('blood_requests')
+      .update({ units_fulfilled: newFulfilled, status })
+      .eq('id', pledgeOpen.id);
+    if (reqErr) {
+      notify('Donation recorded but could not update request status', 'error');
+    }
+
+    await supabase
+      .from('profiles')
+      .update({ last_donation_date: new Date().toISOString().slice(0, 10) })
+      .eq('id', profile.id);
+
     notify('Donation recorded. Thank you for saving a life!', 'success');
     setPledgeOpen(null);
     setPledgeUnits(1);
