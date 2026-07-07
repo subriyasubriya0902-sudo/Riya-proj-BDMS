@@ -12,7 +12,7 @@ import {
 import { StatCard, BloodDrop, AvailabilityBadge, EmptyState, Modal } from '../components/ui';
 import { AnalyticsDashboard } from '../components/AnalyticsDashboard';
 
-type Tab = 'overview' | 'analytics' | 'donors' | 'requests' | 'create';
+type Tab = 'overview' | 'analytics' | 'donors' | 'requests';
 
 const URGENCY_OPTIONS: { value: UrgencyLevel; label: string; color: string }[] = [
   { value: 'critical', label: 'Critical — Immediate', color: 'text-red-600' },
@@ -309,7 +309,6 @@ export function AdminDashboard() {
     { id: 'analytics', label: 'Analytics', icon: <TrendingUp className="h-4 w-4" /> },
     { id: 'donors', label: 'Donors', icon: <Users className="h-4 w-4" /> },
     { id: 'requests', label: 'Blood Requests', icon: <Heart className="h-4 w-4" />, badge: requests.filter((r) => r.status === 'pending').length },
-    { id: 'create', label: 'Create Request', icon: <Plus className="h-4 w-4" /> },
   ];
 
   return (
@@ -325,7 +324,7 @@ export function AdminDashboard() {
             <p className="text-sm text-gray-500">Manage donors, blood requests & notifications</p>
           </div>
         </div>
-        <button onClick={() => { setCreateOpen(true); setTab('create'); }} className="btn-primary">
+        <button onClick={() => setCreateOpen(true)} className="btn-primary">
           <Plus className="h-4 w-4" /> Create Blood Request
         </button>
       </div>
@@ -335,7 +334,7 @@ export function AdminDashboard() {
         {tabs.map((t) => (
           <button
             key={t.id}
-            onClick={() => t.id === 'create' ? setCreateOpen(true) : setTab(t.id)}
+            onClick={() => setTab(t.id)}
             className={`flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium whitespace-nowrap transition-colors ${
               tab === t.id
                 ? 'bg-blood-600 text-white shadow-sm'
