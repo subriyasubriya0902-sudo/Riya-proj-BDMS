@@ -65,7 +65,8 @@ export function BloodRequests() {
     }
 
     const newFulfilled = fresh.units_fulfilled + pledgeUnits;
-    const status = newFulfilled >= fresh.units_required ? 'fulfilled' : 'open';
+    const nowFulfilled = newFulfilled >= fresh.units_required;
+    const status = nowFulfilled ? 'fulfilled' : 'open';
     const { error: reqErr } = await supabase
       .from('blood_requests')
       .update({ units_fulfilled: newFulfilled, status })
@@ -78,6 +79,19 @@ export function BloodRequests() {
       .from('profiles')
       .update({ last_donation_date: new Date().toISOString().slice(0, 10) })
       .eq('id', profile.id);
+
+    // Notify the requester (if this isn't a self-donation)
+    if (pledgeOpen.requester_id && pledgeOpen.requester_id !== profile.id) {
+      await supabase.from('notifications').insert({
+        recipient_id: pledgeOpen.requester_id,
+        request_id: pledgeOpen.id,
+        title: nowFulfilled ? 'Request fully fulfilled!' : 'Donor has pledged',
+        message: nowFulfilled
+          ? `Your ${pledgeOpen.blood_group} request at ${pledgeOpen.hospital_name} has been fully fulfilled (${newFulfilled}/${fresh.units_required} units). Thank you!`
+          : `${profile.full_name} pledged ${pledgeUnits} unit(s) of ${pledgeOpen.blood_group} for your request at ${pledgeOpen.hospital_name}. (${newFulfilled}/${fresh.units_required} units so far)`,
+        type: 'request' as const,
+      });
+    }
 
     notify('Donation recorded. Thank you for saving a life!', 'success');
     setPledgeOpen(null);

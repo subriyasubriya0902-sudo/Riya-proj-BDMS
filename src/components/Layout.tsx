@@ -1,4 +1,4 @@
-import { ReactNode } from 'react';
+import { ReactNode, RefObject } from 'react';
 import { Profile } from '../lib/supabase';
 import { Droplet, Moon, Sun, Bell, LogOut, Menu, X } from 'lucide-react';
 
@@ -19,6 +19,7 @@ export function Layout({
   menuOpen,
   setMenuOpen,
   unreadCount = 0,
+  bellRef,
   children,
 }: {
   navItems: NavItem[];
@@ -31,6 +32,7 @@ export function Layout({
   menuOpen: boolean;
   setMenuOpen: (b: boolean) => void;
   unreadCount?: number;
+  bellRef?: RefObject<HTMLButtonElement | null>;
   children: ReactNode;
 }) {
   return (
@@ -62,6 +64,7 @@ export function Layout({
               {theme === 'dark' ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
             </button>
             <button
+              ref={bellRef}
               onClick={() => onNavigate('notifications')}
               className="btn-ghost relative h-9 w-9 !p-0"
               aria-label="Notifications"

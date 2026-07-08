@@ -99,6 +99,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         is_admin: isAdmin,
       });
       if (profileError) return { error: profileError.message };
+
+      // Notify all admins of new registration (fire-and-forget)
+      ;(async () => {
+        const { data: admins } = await supabase
+          .from('profiles')
+          .select('id')
+          .eq('is_admin', true)
+          .neq('id', data.user!.id);
+        if (admins && admins.length > 0) {
+          await supabase.from('notifications').insert(
+            admins.map((a: { id: string }) => ({
+              recipient_id: a.id,
+              request_id: null,
+              title: 'New donor registered',
+              message: `${metadata.full_name} (${metadata.blood_group}, ${metadata.address || 'no address'}) has joined LifeFlow as a ${isAdmin ? 'admin' : 'donor'}.`,
+              type: 'system' as const,
+            }))
+          );
+        }
+      })();
     }
     return { error: null };
   };

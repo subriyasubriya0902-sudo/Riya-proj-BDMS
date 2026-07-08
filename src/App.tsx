@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { AuthProvider, useAuth } from './lib/auth';
 import { ThemeProvider, useTheme } from './lib/theme';
 import { ToastProvider } from './lib/toast';
+import { NotificationsProvider, useNotifications } from './lib/notifications';
 import { Landing } from './pages/Landing';
 import { Login } from './pages/Login';
 import { AdminLogin } from './pages/AdminLogin';
@@ -13,7 +14,6 @@ import { BloodRequests } from './pages/BloodRequests';
 import { EligibilityChecker } from './pages/EligibilityChecker';
 import { Notifications } from './pages/Notifications';
 import { Layout } from './components/Layout';
-import { supabase } from './lib/supabase';
 import { Droplet, Home, MapPin, Heart, CheckCircle2, Bell, Shield } from 'lucide-react';
 
 type Route = 'home' | 'login' | 'admin-login' | 'register' | 'dashboard' | 'admin' | 'search' | 'requests' | 'eligibility' | 'notifications';
@@ -31,35 +31,9 @@ function navigate(route: Route) {
 function Router() {
   const { user, profile, loading, signOut } = useAuth();
   const { theme, toggle } = useTheme();
+  const { unreadCount, bellRef } = useNotifications();
   const [route, setRoute] = useState<Route>(getRoute());
   const [menuOpen, setMenuOpen] = useState(false);
-  const [unreadCount, setUnreadCount] = useState(0);
-
-  const loadUnread = useCallback(async () => {
-    if (!user) return;
-    const { count } = await supabase
-      .from('notifications')
-      .select('*', { count: 'exact', head: true })
-      .eq('recipient_id', user.id)
-      .eq('is_read', false);
-    setUnreadCount(count ?? 0);
-  }, [user]);
-
-  useEffect(() => {
-    loadUnread();
-  }, [loadUnread, route]);
-
-  useEffect(() => {
-    if (!user) return;
-    const sub = supabase
-      .channel('app-notifications')
-      .on('postgres_changes',
-        { event: '*', schema: 'public', table: 'notifications', filter: `recipient_id=eq.${user.id}` },
-        () => loadUnread()
-      )
-      .subscribe();
-    return () => { supabase.removeChannel(sub); };
-  }, [user, loadUnread]);
 
   useEffect(() => {
     const onHash = () => {
@@ -93,8 +67,6 @@ function Router() {
   const isAuthed = !!user && !!profile;
   const isAdmin = profile?.is_admin;
 
-  // If user is set but profile hasn't loaded yet, show a brief loading state
-  // to avoid incorrect redirects during the auth state transition.
   if (user && !profile) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-white dark:bg-gray-950">
@@ -169,9 +141,18 @@ function Router() {
       menuOpen={menuOpen}
       setMenuOpen={setMenuOpen}
       unreadCount={unreadCount}
+      bellRef={bellRef}
     >
       {page}
     </Layout>
+  );
+}
+
+function AppWithNotifications() {
+  return (
+    <NotificationsProvider>
+      <Router />
+    </NotificationsProvider>
   );
 }
 
@@ -180,7 +161,7 @@ export default function App() {
     <ThemeProvider>
       <ToastProvider>
         <AuthProvider>
-          <Router />
+          <AppWithNotifications />
         </AuthProvider>
       </ToastProvider>
     </ThemeProvider>
