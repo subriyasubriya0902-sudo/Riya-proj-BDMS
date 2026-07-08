@@ -11,6 +11,7 @@ import {
 } from '../lib/supabase';
 import { StatCard, BloodDrop, AvailabilityBadge, EmptyState, Modal } from '../components/ui';
 import { AnalyticsDashboard } from '../components/AnalyticsDashboard';
+import { email } from '../lib/email';
 
 type Tab = 'overview' | 'analytics' | 'donors' | 'requests';
 
@@ -175,6 +176,18 @@ export function AdminDashboard() {
         type: 'request' as const,
       }));
       await supabase.from('notifications').insert(notifs);
+      // Email matching donors (fire-and-forget)
+      candidates.forEach((d) => {
+        email.sendBloodRequest(d.id, {
+          blood_group: newReq.blood_group,
+          hospital: newReq.hospital_name,
+          address: newReq.hospital_location ?? '',
+          contact_name: newReq.contact_name,
+          contact_phone: newReq.contact_phone,
+          units_required: newReq.units_required,
+          urgency: newReq.urgency_level,
+        }).catch(() => {});
+      });
     }
 
     setCreating(false);
@@ -221,6 +234,27 @@ export function AdminDashboard() {
         message: `${req.units_required} unit(s) of ${req.blood_group} at ${req.hospital_name}. Contact: ${req.contact_name} — ${req.contact_phone}`,
         type: 'request' as const,
       })));
+      // Email donors (fire-and-forget)
+      candidates.forEach((d) => {
+        email.sendBloodRequest(d.id, {
+          blood_group: req.blood_group,
+          hospital: req.hospital_name,
+          address: req.hospital_location ?? '',
+          contact_name: req.contact_name,
+          contact_phone: req.contact_phone,
+          units_required: req.units_required,
+          urgency: req.urgency_level,
+        }).catch(() => {});
+      });
+    }
+    // Email requester about approval
+    if (req.requester_id) {
+      email.sendRequestApproved({
+        requester_id: req.requester_id,
+        blood_group: req.blood_group,
+        hospital: req.hospital_name,
+        units_required: req.units_required,
+      }).catch(() => {});
     }
     notify(`Request approved — ${candidates.length} donors notified`, 'success');
     loadData();
@@ -246,6 +280,13 @@ export function AdminDashboard() {
         message: `Your request for ${rejectTarget.blood_group} at ${rejectTarget.hospital_name} was rejected. Reason: ${rejectReason.trim() || 'No reason provided'}`,
         type: 'system' as const,
       });
+      // Email requester (fire-and-forget)
+      email.sendRequestRejected({
+        requester_id: rejectTarget.requester_id,
+        blood_group: rejectTarget.blood_group,
+        hospital: rejectTarget.hospital_name,
+        reason: rejectReason.trim() || 'No reason provided',
+      }).catch(() => {});
     }
     setRejectTarget(null);
     setRejectReason('');

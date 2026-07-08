@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useState, ReactNode, useCallback } from 'react';
 import { Session, User } from '@supabase/supabase-js';
 import { supabase, Profile } from './supabase';
+import { email } from './email';
 
 interface AuthContextValue {
   session: Session | null;
@@ -100,7 +101,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       });
       if (profileError) return { error: profileError.message };
 
-      // Notify all admins of new registration (fire-and-forget)
+      // Welcome email + admin notifications (fire-and-forget)
+      if (data.session) {
+        email.sendWelcome(data.session.access_token).catch(() => {});
+      }
+
       ;(async () => {
         const { data: admins } = await supabase
           .from('profiles')
@@ -123,24 +128,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return { error: null };
   };
 
-  const signIn = async (email: string, password: string) => {
-    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+  const signIn = async (userEmail: string, password: string) => {
+    const { data, error } = await supabase.auth.signInWithPassword({ email: userEmail, password });
     if (error) return { error: error.message };
-    // Fire-and-forget: send welcome-back email without blocking login
     if (data.session) {
-      fetch(
-        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/send-welcome-email`,
-        {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${data.session.access_token}`,
-            'Content-Type': 'application/json',
-            Apikey: import.meta.env.VITE_SUPABASE_ANON_KEY,
-          },
-        },
-      ).catch(() => {
-        // Non-critical — login still succeeds if email fails
-      });
+      email.sendWelcomeBack(data.session.access_token).catch(() => {});
     }
     return { error: null };
   };

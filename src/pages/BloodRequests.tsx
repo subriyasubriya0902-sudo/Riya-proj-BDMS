@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { Heart, Droplet, Phone, MapPin, Calendar, CheckCircle2, Plus, Clock, X, Send } from 'lucide-react';
 import { useAuth } from '../lib/auth';
 import { useToast } from '../lib/toast';
+import { email } from '../lib/email';
 import { supabase, BloodRequest, Donation, BLOOD_GROUPS, BloodGroup } from '../lib/supabase';
 import { BloodDrop, EmptyState, Modal } from '../components/ui';
 
@@ -94,6 +95,8 @@ export function BloodRequests() {
     }
 
     notify('Donation recorded. Thank you for saving a life!', 'success');
+    // Certificate email (fire-and-forget)
+    email.sendDonationCertificate(pledgeOpen.hospital_name ?? undefined).catch(() => {});
     setPledgeOpen(null);
     setPledgeUnits(1);
     load();
